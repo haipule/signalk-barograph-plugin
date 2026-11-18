@@ -85,7 +85,7 @@ function fluxQuery(config, path, hours, options = {}) {
     return [
         `from(bucket: "${fluxString(src.bucket)}")`,
         `|> range(start: -${hours}h)`,
-        `|> filter(fn: (r) => r["_measurement"] == "${fluxString(s.measurement)}" and r["_field"] == "${fluxString(src.field)}")`,
+        `|> filter(fn: (r) => r["_measurement"] == "${fluxString(s.measurement)}" and r["_field"] == "${fluxString(options.field || src.field)}")`,
         `|> filter(fn: (r) => ${filters.join(' and ')})`,
         `|> filter(fn: (r) => exists r["source"] and r["source"] != "")`,
         `|> group()`,
@@ -106,7 +106,7 @@ function influxQL(config, path, hours, options = {}) {
     where.push(options.source ? `"source" = ${qlString(options.source)}` : `"source" != ''`)
     return {
         db,
-        q: `SELECT mean(${qlIdentifier(src.field)}) FROM ${qlIdentifier(db)}.${rp ? qlIdentifier(rp) : ''}.${qlIdentifier(s.measurement)} ` +
+        q: `SELECT mean(${qlIdentifier(options.field || src.field)}) FROM ${qlIdentifier(db)}.${rp ? qlIdentifier(rp) : ''}.${qlIdentifier(s.measurement)} ` +
             `WHERE ${where.join(' AND ')} GROUP BY time(${resolution(hours, src.type === 'read')}s) fill(none)`
     }
 }
@@ -145,9 +145,11 @@ async function query(influxDB, config, path, value, fetchFn, options = {}) {
     const v1 = !config.organization
     if (options.source !== undefined && !isSource(options.source))
         throw Object.assign(new Error('invalid source'), { status: 400 })
-    const data = v1 ? await queryInfluxQL(config, path, hours, fetchFn, options) : await queryFlux(influxDB, config, path, hours, options)
-    const to = Date.now()
+    let data = v1 ? await queryInfluxQL(config, path, hours, fetchFn, options) : await queryFlux(influxDB, config, path, hours, options)
     const src = source(config, hours, series(path).field)
+    if (!data.length && src.type === "read" && !options.field)
+        data = v1 ? await queryInfluxQL(config, path, hours, fetchFn, { ...options, field: "value" }) : await queryFlux(influxDB, config, path, hours, { ...options, field: "value" })
+    const to = Date.now()
     log(`history ${path}${options.source ? ' of ' + options.source : ''} ${hours}h: ${data.length} point(s) via ${v1 ? 'InfluxQL' : 'Flux'}`)
     return {
         path,

@@ -63,6 +63,19 @@ describe('history queries', () => {
     assert.equal(result.unit, 'Pa');
   });
 
+  it('falls back from average to value for an empty read bucket', async () => {
+    const calls = [];
+    const influx = { getQueryApi: () => ({ collectRows: async (query) => {
+      calls.push(query);
+      return calls.length === 1 ? [] : [{ _time: '2026-11-18T20:00:00Z', _value: 101234 }];
+    }}) };
+    const result = await history.query(influx, { bucket: 'write', read: 'read', organization: 'org', retention: 6 }, 'environment.outside.pressure', 12);
+    assert.deepEqual(result.data, [[Date.parse('2026-11-18T20:00:00Z'), 101234]]);
+    assert.equal(calls.length, 2);
+    assert.match(calls[0], /_field\"] == \"average/);
+    assert.match(calls[1], /_field\"] == \"value/);
+  });
+
   it('reports query errors and limits the timescale', async () => {
     const failing = async () => ({ ok: true, json: async () => ({ results: [{ error: 'database not found' }] }) });
     await assert.rejects(history.query(null, v1, 'environment.outside.pressure', 3, failing), /database not found/);
